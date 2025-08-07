@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plotly Chart JSON Tester</title>
+    <!-- Plotly.js from CDN -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        textarea {
+            width: 90%;
+            max-width: 800px;
+            height: 200px;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #chartDiv {
+            width: 90%;
+            max-width: 800px;
+            height: 500px;
+            margin-top: 20px;
+            border: 1px solid #eee;
+        }
+        #errorDisplay {
+            color: red;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Plotly Chart JSON Tester</h1>
+
+    <p>Paste your <code>plotly_chart_json</code> string from the API response below:</p>
+    <textarea id="plotlyJsonInput" placeholder='Example: {"data": [{"type": "bar", "x": ["A", "B", "C"], "y": [10, 20, 15]}], "layout": {"title": "My Chart"}}'></textarea>
+
+    <button onclick="renderChart()">Render Chart</button>
+
+    <div id="chartDiv">
+        <!-- Plotly chart will be rendered here -->
+    </div>
+
+    <div id="errorDisplay">
+        <!-- Error messages will be shown here -->
+    </div>
+
+    <script>
+        function renderChart() {
+            const jsonString = document.getElementById('plotlyJsonInput').value;
+            const chartDiv = document.getElementById('chartDiv');
+            const errorDisplay = document.getElementById('errorDisplay');
+
+            // Clear previous chart and errors
+            chartDiv.innerHTML = '';
+            errorDisplay.textContent = '';
+
+            if (!jsonString.trim()) {
+                errorDisplay.textContent = 'Error: JSON input is empty.';
+                return;
+            }
+
+            try {
+                // Parse the JSON string into a JavaScript object
+                // The fig.to_json() output from Python Plotly results in a string
+                // which, when parsed, gives an object like: { "data": [...], "layout": {...}, "config": {...} }
+                const figure = JSON.parse(jsonString);
+
+                // Check if the parsed object has 'data' and 'layout' properties
+                if (figure && typeof figure.data !== 'undefined' && typeof figure.layout !== 'undefined') {
+                    // Render the chart using Plotly.newPlot
+                    // Plotly.newPlot(graphDiv, data, layout, config)
+                    Plotly.newPlot('chartDiv', figure.data, figure.layout, figure.config || {});
+                    // The figure.config || {} provides an empty config object if one isn't in the JSON
+                } else {
+                    errorDisplay.textContent = 'Error: Parsed JSON does not have the expected "data" and "layout" properties.';
+                    console.error("Invalid Plotly JSON structure:", figure);
+                }
+            } catch (e) {
+                errorDisplay.textContent = 'Error parsing JSON or rendering chart: ' + e.message;
+                console.error("Error:", e);
+            }
+        }
+    </script>
+
+</body>
+</html>
