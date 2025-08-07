@@ -1,0 +1,191 @@
+services:
+  app:
+    container_name: ai-chat-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: # Pass UID/GID of current host user to match permissions for mounted volumes
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    ports:
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1 # For immediate log output
+      - PYTHONPATH=/app
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - DESCOPE_PROJECT_ID=${DESCOPE_PROJECT_ID}
+      - DESCOPE_MANAGEMENT_KEY=${DESCOPE_MANAGEMENT_KEY}
+      - ALLOWED_SOCIAL_PROVIDERS=${ALLOWED_SOCIAL_PROVIDERS}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Updated path for non-root user
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/appuser/.config/gcloud/application_default_credentials.json
+      - GOOGLE_CLOUD_PROJECT=${GCS_PROJECT_ID}
+      - JWT_AI_SECRET=${JWT_AI_SECRET}
+      - JWT_COLLAB_SECRET=${JWT_COLLAB_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy # Wait for db to be healthy
+      redis:
+        condition: service_healthy # Wait for redis to be healthy
+    volumes:
+      - ./:/app # For development: mounts current directory to /app
+      # Updated mount path for non-root user's home directory
+      - ${MOUNT_GCP_CREDENTIALS-./empty}:/home/appuser/.config/gcloud:ro
+    restart: always
+
+  db:
+    container_name: ai-chat-db
+    image: postgres:14
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  redis:
+    container_name: ai-chat-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    restart: always
+
+  celery_sync_worker:
+    container_name: celery-sync-documents
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    command: bash -c "celery -A app.core.celery_app worker -Q doc_persistence -n sync_worker@%h --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=50 --max-memory-per-child=500000 -O fair --loglevel=${LOG_LEVEL:-INFO}"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GOOGLE_CLOUD_PROJECT=${GCS_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/appuser/.config/gcloud/application_default_credentials.json
+      - LLAMA_PARSE_KEY=${LLAMA_PARSE_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - WEAVIATE_URL=${WEAVIATE_URL}
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY}
+      - JWT_AI_SECRET=${JWT_AI_SECRET}
+      - JWT_COLLAB_SECRET=${JWT_COLLAB_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ${MOUNT_GCP_CREDENTIALS-./empty}:/home/appuser/.config/gcloud:ro
+    restart: always
+
+  celery_worker:
+    container_name: ai-chat-celery
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    command: bash -c "rm -f /tmp/celerybeat.pid /tmp/celerybeat-schedule && celery -A app.core.celery_app worker -Q doc_hierarchy,doc_processing,operations,template_updation -n unified_worker@%h --concurrency=3 --prefetch-multiplier=1 --max-tasks-per-child=100 --max-memory-per-child=500000 -O fair --loglevel=${LOG_LEVEL:-INFO}"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GOOGLE_CLOUD_PROJECT=${GCS_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/appuser/.config/gcloud/application_default_credentials.json
+      - LLAMA_PARSE_KEY=${LLAMA_PARSE_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - WEAVIATE_URL=${WEAVIATE_URL}
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY}
+      - JWT_AI_SECRET=${JWT_AI_SECRET}
+      - JWT_COLLAB_SECRET=${JWT_COLLAB_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ${MOUNT_GCP_CREDENTIALS-./empty}:/home/appuser/.config/gcloud:ro
+    restart: always
+
+  celery_flower:
+    container_name: ai-chat-flower
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    command: bash -c "mkdir -p /tmp/flower && celery --broker=redis://redis:6379/0 -A app.core.celery_app flower --port=5555 --broker_api=redis://redis:6379/0 --persistent=True --state_save_interval=5000 --db=/tmp/flower/flower.db"
+    ports:
+      - "5555:5555"
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-admin:admin}
+      - FLOWER_PERSISTENT=True
+      - FLOWER_STATE_SAVE_INTERVAL=5000
+      - FLOWER_URL_PREFIX=${FLOWER_URL_PREFIX:-} # Ensure default is empty string if not set
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - GOOGLE_CLOUD_PROJECT=${GCS_PROJECT_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/appuser/.config/gcloud/application_default_credentials.json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery_worker: # Flower depends on a worker being available to inspect
+        condition: service_started # or service_healthy if your worker has a healthcheck
+    volumes:
+      - ./:/app
+      - ${MOUNT_GCP_CREDENTIALS-./empty}:/home/appuser/.config/gcloud:ro
+    restart: always
+
+volumes:
+  postgres_data:
